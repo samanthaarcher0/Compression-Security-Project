@@ -83,7 +83,7 @@ elements.
 
 On the implementation side, I began working on code to measure the compression ratio, compression time, and decompression time for LZ77 encoding and decoding with various attacker-inputted seed files. 
 It is immediately apparent that with more characters of the “secret key” used in the seed file, the compression ratio decreases. I hope to gather more data and generate plots to show how this might 
-allow an attacker to use the compression ratio to gain information about a secret key. My goal is to be able to guess the secret key with some accuracy by repeatedly supplying different guesses as the seed and using the compression ratio. 
+allow an attacker to use the compression ratio to gain information about a secret key. My goal is to be able to guess the secret key with some accuracy by repeatedly supplying different guesses as the seed and using the compression ratio. See [compression_security.py](https://github.com/samanthaarcher0/Compression-Security-Project/blob/main/compression_security.py) for progress. 
 
 The plan for the remaining weeks is to collect the above data. Subsequently, I hope to run a similar experiment using other encoding algorithms, such as Huffman or Arithmetic, and see if by changing a 
 part of the source data distribution, I can affect the compression ratio. This will reveal differences in how compression algorithms may be more or less vulnerable to side channel leakage.
