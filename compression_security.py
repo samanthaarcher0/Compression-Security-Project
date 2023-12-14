@@ -1,45 +1,36 @@
 import argparse
 import os
 import sys
-import numpy
 import time
 import random
 import string
 import csv
 import itertools
 import math
-import requests
-from bs4 import BeautifulSoup
+import matplotlib.pyplot as plt
+import numpy as np
 
 # Append scl to path in order to import encoders and decoders
 sys.path.append('../stanford_compression_library')
 from scl.compressors.lz77 import LZ77Encoder, LZ77Decoder
-from scl.compressors.lz77_sliding_window import LZ77SlidingWindowEncoder, HashBasedMatchFinder
+from scl.compressors.huffman_coder import HuffmanEncoder, HuffmanDecoder
+from scl.compressors.arithmetic_coding import ArithmeticEncoder, ArithmeticDecoder, AECParams
 from scl.core.data_block import DataBlock
+from scl.core.data_stream import TextFileDataStream
+from scl.core.prob_dist import Frequencies
 
 
-def fetch_sherlock_holmes_novel():
-    url = "https://www.gutenberg.org/ebooks/1661.txt.utf-8"  # Sherlock Holmes novel on Project Gutenberg
-    response = requests.get(url)
-    
-    if response.status_code == 200:
-        return response.text
-    else:
-        print(f"Failed to fetch the novel. Status Code: {response.status_code}")
-        return None
+def read_sherlock():
+    DATA_BLOCK_SIZE = 50000
+    FILE_PATH = "sherlock_ascii.txt"
 
+    # read in DATA_BLOCK_SIZE bytes
+    with TextFileDataStream(FILE_PATH, "r") as fds:
+        data_block = fds.get_block(block_size=DATA_BLOCK_SIZE)
 
-def clean_text(raw_text):
-    # You may need to customize this function based on the specific format of the novel text
-    # This example removes Project Gutenberg's metadata at the beginning and end of the novel
-    start_marker = "I. A SCANDAL IN BOHEMIA"
-    end_marker = "*** END OF THE PROJECT GUTENBERG EBOOK THE ADVENTURES OF SHERLOCK HOLMES ***"
-    start_index = raw_text.find(start_marker) + len(start_marker)
-    end_index = raw_text.find(end_marker)
-    raw_text = raw_text[start_index:end_index]
-    raw_text = ''.join(i for i in raw_text if ord(i)<128)
-    raw_text = raw_text.replace("\n", " ").replace("\r", "")
-    return raw_text.strip()
+    text_string = "".join(data_block.data_list)
+    text_string1 = ' '.join(text_string.split())
+    return text_string1
 
 
 def get_random_string(length, letters=None):
@@ -55,7 +46,7 @@ def generate_text_with_secret_key(text, L, secret_key, prefix):
     start_index = random.randint(0, len(text) - L)
     secret_index = random.randint(0, L)
     text = text[start_index:start_index+L]
- 
+
     # Embed the secret key within the text
     key_with_prefix = prefix + secret_key
     text_with_key = text[:secret_index] + key_with_prefix + text[secret_index+1:]
@@ -63,9 +54,10 @@ def generate_text_with_secret_key(text, L, secret_key, prefix):
     return binary_text
 
 
-def run_trials_compute_compression_metrics(iterations, text, letters, prefix, L):
+def run_trials_compute_compression_metrics(iterations, text, letters, prefix, L, compression_algorithm, use_seed):
     # Loop through iterations and collect statistics
     compression_stats = []
+    compression_stats_array = np.zeros((iterations,32,3))
     for t in range(iterations):
         print(f"running trial {t}")
 
@@ -73,22 +65,46 @@ def run_trials_compute_compression_metrics(iterations, text, letters, prefix, L)
         secret = get_random_string(32, letters)
         
         # Get text
-        text_with_key = generate_text_with_secret_key(sherlock_novel_cleaned, L, secret, prefix)
-        uncompressed_size = len(text_with_key)*8
+        text_with_key = generate_text_with_secret_key(text, L, secret, prefix)
         print(text_with_key)
-        print(uncompressed_size)
 
         for i in range(len(secret)):
-            # LZ77 initialization
-            seed = prefix + secret[:i]
-            seed_bin = seed.encode('utf-8')
-            encoder = LZ77Encoder(initial_window=seed_bin)
-            decoder = LZ77Decoder(initial_window=seed_bin)
             num_char_of_secret_key = i
+            if use_seed == 1:
+                seed = prefix + secret[:i]
+            elif use_seed == 0:
+                seed = prefix + get_random_string(i, letters)
+            seed_bin = seed.encode('utf-8')
+
+            if compression_algorithm=="lz77":
+                # LZ77 initialization
+                encoder = LZ77Encoder(initial_window=seed_bin)
+                decoder = LZ77Decoder(initial_window=seed_bin)
+                data_block = DataBlock(list(text_with_key))
+            elif compression_algorithm=="huffman":
+                # Huffman initialization
+                text_with_key += seed_bin
+                uncompressed_size = len(text_with_key)*8
+                data_block = DataBlock(list(text_with_key))
+                prob_dist = data_block.get_empirical_distribution(order=0)
+                encoder = HuffmanEncoder(prob_dist)
+                decoder = HuffmanDecoder(prob_dist)
+            elif compression_algorithm=="aes":
+                # Arithmetic initialization
+                text_with_key += seed_bin
+                uncompressed_size = len(text_with_key)*8
+                data_block = DataBlock(list(text_with_key))
+                params = AECParams()
+                freq_model = Frequencies(data_block.get_counts())
+                encoder = ArithmeticEncoder(params, freq_model)
+                decoder = ArithmeticDecoder(params, freq_model)
+            else:
+                print("Unsupported compression algorithm specified. Exiting.")
+                return
 
             # Encode text
             start = time.time()
-            encoded_text = encoder.encode_block(DataBlock(list(text_with_key)))
+            encoded_text = encoder.encode_block(data_block)
             end = time.time()
             comp_time = end - start
 
@@ -100,19 +116,26 @@ def run_trials_compute_compression_metrics(iterations, text, letters, prefix, L)
 
             # Compute ratio
             compressed_size = len(encoded_text)
-            print(compressed_size)
             compression_ratio = float(compressed_size)/float(uncompressed_size)
 
             # Append stats
             compression_stats.append([num_char_of_secret_key, comp_time, decomp_time, compression_ratio])
+            compression_stats_array[t][num_char_of_secret_key] += [comp_time, decomp_time, compression_ratio]
 
+    # Write compression states to a CSV file
+    csv_filename = f"compression_stats_{compression_algorithm}.csv"
+    write_compression_stats(compression_stats, csv_filename)
+    return compression_stats_array
+
+
+def write_compression_stats(compression_stats, filename):
     # Initialize csv file
     csv_fields = ['num secret char in seed', 'compression time', 'decompression time', 'compression ratio']
-    csv_filename = "compression_stats.csv"
-    # writing to csv file 
-    if os.path.exists(csv_filename):
-        os.remove(csv_filename)
-    with open(csv_filename, 'w') as csvfile:  
+
+    # Write to csv file 
+    if os.path.exists(filename):
+        os.remove(filename)
+    with open(filename, 'w') as csvfile:  
         csvwriter = csv.writer(csvfile)              
         csvwriter.writerow(csv_fields)
         csvwriter.writerows(compression_stats) 
@@ -213,7 +236,7 @@ def run_trials_guess_secret(iterations, text, letters, prefix, L):
         secret = get_random_string(16, letters)
         
         # Get text
-        text = generate_text_with_secret_key(sherlock_novel_cleaned, L, secret, prefix)
+        text = generate_text_with_secret_key(text, L, secret, prefix)
         print(text)
 
         # Guess secret
@@ -236,27 +259,56 @@ def run_trials_guess_secret(iterations, text, letters, prefix, L):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--input_dir", help="input directory", type=str)
-    parser.add_argument("-s", "--seed", help="initialize window from seed input file", type=str)
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("-i", "--input_dir", help="input directory", type=str)
+    # parser.add_argument("-s", "--seed", help="initialize window from seed input file", type=str)
+    # args = parser.parse_args()
     
-    # Get Sherlock Novel
-    sherlock_novel_raw = fetch_sherlock_holmes_novel()
-
-    if sherlock_novel_raw:
-        sherlock_novel_cleaned = clean_text(sherlock_novel_raw)
+    sherlock_novel = read_sherlock()
 
     # Initialize experiment params
-    iterations = 5
+    iterations = 1
     letters = string.ascii_lowercase
-    prefix = ""
+    prefix = "the secret is "
     L = 500
 
     # Run trials to look at changes in compression ratio, and compression/decompression time
-    #run_trials_compute_compression_metrics(iterations, sherlock_novel_cleaned, letters, prefix, L)
-    
+    compression_algorithm = "Huffman"
+    compression_stats_array_no_seed = run_trials_compute_compression_metrics(iterations, sherlock_novel, letters, prefix, L, compression_algorithm, 0)
+    compression_stats_array_seed = run_trials_compute_compression_metrics(iterations, sherlock_novel, letters, prefix, L, compression_algorithm, 1)
+
     # Run trials trying to guess the secret key
-    run_trials_guess_secret(iterations, sherlock_novel_cleaned, letters, prefix, L)
+    #run_trials_guess_secret(iterations, sherlock_novel, letters, prefix, L)
+
+    # Creating plot
+    plt.style.use('_mpl-gallery')
+    fig = plt.figure()
+    ax1 = fig.add_subplot(111)
+    labels = [str(i) for i in range(32)] 
+
+    box_plot_data_seed = []
+    box_plot_data_no_seed = []
+    for i in range(32):
+        box_plot_data_seed.append(compression_stats_array_seed[:,i,2])
+        box_plot_data_no_seed.append(compression_stats_array_no_seed[:,i,2])
+    bp1 = ax1.boxplot(box_plot_data_seed, patch_artist=True, labels=labels)
+    bp2 = ax1.boxplot(box_plot_data_no_seed, patch_artist=True, labels=labels)
+
+    colors = {'blue': bp1, 'purple': bp2}
+    for col, bplot in colors.items():
+        for item in ['boxes', 'whiskers', 'fliers', 'caps']:
+            plt.setp(bplot[item], color=col)
+            plt.setp(bplot["medians"], color="red")
+
+    ax1.legend([bp1["boxes"][0], bp2["boxes"][0]], ['Secret colocated with data', 'Random guess colocated with data'], loc='lower right')
+    if compression_algorithm == "huffman":
+        plt.title("How co-locating secret with data affects Huffman compression ratio")
+    elif compression_algorithm == "aes":
+        plt.title("How co-locating secret with data affects Arithmetic Coding compression ratio")
+    plt.show()
+
+
+
+
 
     sys.exit(0)
