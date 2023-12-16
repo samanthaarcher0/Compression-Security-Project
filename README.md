@@ -27,11 +27,11 @@ Here are the arguments to provide to the script:
 
 `-t/--target` (REQUIRED): specify which experiment to run. Options are `lz77`, `huffman`, and `guess_secret`
 
-`-l/--length`: specify the length of the source data before the secret has been inserted. Default = 500 characters
+`-l/--length`: specify the length of the source data before the secret has been inserted. Default=500 characters
 
-`-i/--iterations`: specify the number of iterations to run the experiment. This only applies for Huffman where multiple trials are required to see statistical significance and guessing the secret.
+`-i/--iterations`: specify the number of iterations to run the experiment. This only applies for Huffman where multiple trials are required to see statistical significance and guessing the secret. Default=1
 
-`-p/--prefix`: specify the attacker-known prefix for the data. Default = "the secret is "
+`-p/--prefix`: specify the attacker-known prefix for the data. Default="the secret is "
 
 # Other files
 
