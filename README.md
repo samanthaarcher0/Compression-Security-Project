@@ -1,7 +1,7 @@
 # Compression-Security-Project
 EE274 Final Project
 
-See <link to project report> for details.
+See https://github.com/samanthaarcher0/Compression-Security-Project/blob/main/Project%20Report.pdf for details.
 
 # Setup
 
